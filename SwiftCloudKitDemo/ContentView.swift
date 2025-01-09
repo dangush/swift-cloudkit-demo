@@ -7,81 +7,68 @@
 
 import SwiftUI
 import CoreData
+import CryptoKit
 
 struct ContentView: View {
-    @Environment(\.managedObjectContext) private var viewContext
-
-    @FetchRequest(
-        sortDescriptors: [NSSortDescriptor(keyPath: \Item.timestamp, ascending: true)],
-        animation: .default)
-    private var items: FetchedResults<Item>
-
+    @State private var privateKeyString: String = "Loading..."
+    @State private var lastUpdated: Date = Date()
+    
     var body: some View {
-        NavigationView {
-            List {
-                ForEach(items) { item in
-                    NavigationLink {
-                        Text("Item at \(item.timestamp!, formatter: itemFormatter)")
-                    } label: {
-                        Text(item.timestamp!, formatter: itemFormatter)
+        VStack(spacing: 20) {
+            Text("Private Key Info")
+                .font(.title)
+            
+            Text(privateKeyString)
+                .font(.system(.body, design: .monospaced))
+                .multilineTextAlignment(.center)
+                .padding()
+            
+            Text("Last Updated: \(lastUpdated.formatted())")
+                .font(.caption)
+            
+            Button("Refresh") {
+                Task {
+                    await loadPrivateKey()
+                }
+            }
+            Button(role: .destructive) {
+                Task {
+                    do {
+                        try await PrivateKeyManager.shared.deleteAllKeys()
+                    } catch {
+                        print("Error deleting keys: \(error)")
                     }
                 }
-                .onDelete(perform: deleteItems)
+            } label: {
+                Text("Delete All Keys")
+                    .foregroundColor(.red)
             }
-            .toolbar {
-#if os(iOS)
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    EditButton()
-                }
-#endif
-                ToolbarItem {
-                    Button(action: addItem) {
-                        Label("Add Item", systemImage: "plus")
-                    }
-                }
-            }
-            Text("Select an item")
         }
-    }
-
-    private func addItem() {
-        withAnimation {
-            let newItem = Item(context: viewContext)
-            newItem.timestamp = Date()
-
-            do {
-                try viewContext.save()
-            } catch {
-                // Replace this implementation with code to handle the error appropriately.
-                // fatalError() causes the application to generate a crash log and terminate. You should not use this function in a shipping application, although it may be useful during development.
-                let nsError = error as NSError
-                fatalError("Unresolved error \(nsError), \(nsError.userInfo)")
+        .padding()
+        .task {
+            await loadPrivateKey()
+        }
+        // Add periodic refresh
+        .onReceive(Timer.publish(every: 5, on: .main, in: .common).autoconnect()) { _ in
+            Task {
+                await loadPrivateKey()
             }
         }
     }
-
-    private func deleteItems(offsets: IndexSet) {
-        withAnimation {
-            offsets.map { items[$0] }.forEach(viewContext.delete)
-
-            do {
-                try viewContext.save()
-            } catch {
-                // Replace this implementation with code to handle the error appropriately.
-                // fatalError() causes the application to generate a crash log and terminate. You should not use this function in a shipping application, although it may be useful during development.
-                let nsError = error as NSError
-                fatalError("Unresolved error \(nsError), \(nsError.userInfo)")
-            }
+    
+    private func loadPrivateKey() async {
+        do {
+            let privateKey = try await PrivateKeyManager.shared.getOrCreatePrivateKey()
+            let publicKey = privateKey.publicKey
+            let keyData = publicKey.rawRepresentation
+            
+            privateKeyString = "Public Key (hex):\n" + keyData.map { String(format: "%02x", $0) }.joined()
+            lastUpdated = Date()
+        } catch {
+            privateKeyString = "Error: \(error.localizedDescription)"
         }
     }
 }
-
-private let itemFormatter: DateFormatter = {
-    let formatter = DateFormatter()
-    formatter.dateStyle = .short
-    formatter.timeStyle = .medium
-    return formatter
-}()
 
 #Preview {
     ContentView().environment(\.managedObjectContext, PersistenceController.preview.container.viewContext)
